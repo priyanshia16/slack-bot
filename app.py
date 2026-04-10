@@ -10,15 +10,15 @@ from datetime import datetime
 # ==============================
 
 app = App(
-    token="xoxb-1259594035652-10740645182023-sVPgUXYxX8gRElqYO2VsIkZ9",
-    signing_secret="86c4027a79f6abfc5b2ef5c44567cbab"
+    token="xoxb-XXXX",  # keep your token
+    signing_secret="XXXX"
 )
 
 # ==============================
 # AIRTABLE CONFIG
 # ==============================
 
-AIRTABLE_TOKEN = "patMhjMqmVkMf0Gpc.b42cc2035d97a186f37b0c8b0b96c008966e7fb3f9008c44771486d7721eaf85"
+AIRTABLE_TOKEN = "YOUR_AIRTABLE_TOKEN"
 BASE_ID = "apphLcvA4OO7gKjl9"
 
 TABLE_REPLIES = "Slack Company Replies"
@@ -35,6 +35,20 @@ HEADERS = {
 
 flask_app = Flask(__name__)
 handler = SlackRequestHandler(app)
+
+# ==============================
+# HELPER: GET USER NAME
+# ==============================
+
+def get_user_name(user_id):
+    try:
+        response = app.client.users_info(user=user_id)
+        if response["ok"]:
+            return response["user"]["real_name"]
+    except Exception as e:
+        print("User fetch error:", e)
+
+    return user_id  # fallback
 
 # ==============================
 # ROUTES
@@ -67,17 +81,22 @@ def handle_message_events(body, logger):
     if "subtype" in event:
         return
 
-    # 🔥 ONLY process thread replies
-    if "thread_ts" not in event:
-        return
-
     text = event.get("text")
     channel = event.get("channel")
-    thread_id = event.get("thread_ts")
+    user_id = event.get("user")
     ts = event.get("ts")
+
+    # 🔥 Thread ID logic
+    thread_id = event.get("thread_ts") or event.get("ts")
 
     print("Message:", text)
     print("Thread ID:", thread_id)
+
+    # ==============================
+    # GET USER NAME
+    # ==============================
+
+    user_name = get_user_name(user_id)
 
     # ==============================
     # CREATE SLACK LINK
@@ -87,7 +106,7 @@ def handle_message_events(body, logger):
     slack_link = f"https://slack.com/archives/{channel}/p{ts_formatted}"
 
     # ==============================
-    # FETCH FROM NOSHOWS (CHECK VALID THREAD)
+    # CHECK NOSHOWS MATCH
     # ==============================
 
     url_noshows = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NOSHOWS}"
@@ -102,15 +121,16 @@ def handle_message_events(body, logger):
 
     print(f"Matching NoShows records: {len(records)}")
 
-    # ❌ Ignore if not our bot thread
-    if not records:
-        return
+    # ==============================
+    # GET COMPANY NAME (if exists)
+    # ==============================
 
-    # ✅ Get companyName
-    company_name = records[0]["fields"].get("companyName", "")
+    company_name = ""
+    if records:
+        company_name = records[0]["fields"].get("companyName", "")
 
     # ==============================
-    # STORE IN REPLIES TABLE
+    # STORE IN REPLIES TABLE (FOR ALL MESSAGES)
     # ==============================
 
     url_replies = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_REPLIES}"
@@ -119,10 +139,12 @@ def handle_message_events(body, logger):
         "fields": {
             "slackLink": slack_link,
             "threadId": thread_id,
-            "channelName": channel,  # (keeping same field as before)
+            "channelName": channel,
             "message": text,
             "Date": datetime.utcnow().isoformat(),
-            "companyName": company_name
+            "companyName": company_name,
+            "senderId": user_id,
+            "senderName": user_name
         }
     }
 
@@ -130,22 +152,23 @@ def handle_message_events(body, logger):
     print("Replies table:", res.status_code)
 
     # ==============================
-    # UPDATE NOSHOWS TABLE
+    # UPDATE NOSHOWS ONLY IF MATCH FOUND
     # ==============================
 
-    for rec in records:
-        record_id = rec["id"]
+    if records:
+        for rec in records:
+            record_id = rec["id"]
 
-        update_url = f"{url_noshows}/{record_id}"
+            update_url = f"{url_noshows}/{record_id}"
 
-        update_data = {
-            "fields": {
-                "Issue Raised by Company": "New Message"
+            update_data = {
+                "fields": {
+                    "Issue Raised by Company": "New Message"
+                }
             }
-        }
 
-        update_res = requests.patch(update_url, json=update_data, headers=HEADERS)
-        print("Updated NoShows:", update_res.status_code)
+            update_res = requests.patch(update_url, json=update_data, headers=HEADERS)
+            print("Updated NoShows:", update_res.status_code)
 
 # ==============================
 # RUN SERVER
@@ -154,4 +177,3 @@ def handle_message_events(body, logger):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
-
