@@ -10,15 +10,15 @@ from datetime import datetime
 # ==============================
 
 app = App(
-    token="xoxb-XXXX",  # keep your token
-    signing_secret="XXXX"
+    token="xoxb-1259594035652-10740645182023-sVPgUXYxX8gRElqYO2VsIkZ9",  # keep your token
+    signing_secret="86c4027a79f6abfc5b2ef5c44567cbab"
 )
 
 # ==============================
 # AIRTABLE CONFIG
 # ==============================
 
-AIRTABLE_TOKEN = "YOUR_AIRTABLE_TOKEN"
+AIRTABLE_TOKEN = "patMhjMqmVkMf0Gpc.b42cc2035d97a186f37b0c8b0b96c008966e7fb3f9008c44771486d7721eaf85"
 BASE_ID = "apphLcvA4OO7gKjl9"
 
 TABLE_REPLIES = "Slack Company Replies"
