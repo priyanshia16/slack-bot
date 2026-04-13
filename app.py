@@ -43,8 +43,11 @@ handler = SlackRequestHandler(app)
 def get_user_name(user_id):
     try:
         response = app.client.users_info(user=user_id)
+        print("Full user API response:", response)
         if response["ok"]:
             user = response["user"]
+            print("real_name:", user.get("real_name"))
+            print("display_name:", user["profile"].get("display_name"))
             return (
                 user.get("real_name")
                 or user["profile"].get("display_name")
@@ -61,6 +64,7 @@ def get_user_name(user_id):
 def get_channel_name(channel_id):
     try:
         response = app.client.conversations_info(channel=channel_id)
+        print("Full channel API response:", response)
         if response["ok"]:
             return response["channel"].get("name", channel_id)
     except Exception as e:
@@ -108,6 +112,8 @@ def handle_message_events(body, logger):
 
     print("Message:", text)
     print("Thread ID:", thread_id)
+    print("Raw channel ID:", channel)
+    print("Raw user ID:", user_id)
 
     # ==============================
     # GET USER NAME + CHANNEL NAME
@@ -116,8 +122,8 @@ def handle_message_events(body, logger):
     user_name = get_user_name(user_id)
     channel_name = get_channel_name(channel)
 
-    print("Sender Name:", user_name)
-    print("Channel Name:", channel_name)
+    print("Resolved Sender Name:", user_name)
+    print("Resolved Channel Name:", channel_name)
 
     # ==============================
     # CREATE SLACK LINK
@@ -170,7 +176,8 @@ def handle_message_events(body, logger):
     }
 
     res = requests.post(url_replies, json=data_replies, headers=HEADERS)
-    print("Replies table:", res.status_code)
+    print("Replies table status:", res.status_code)
+    print("Replies table response:", res.json())
 
     # ==============================
     # UPDATE NOSHOWS IF MATCH FOUND
