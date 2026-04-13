@@ -3,6 +3,7 @@ from slack_bolt.adapter.flask import SlackRequestHandler
 from flask import Flask, request
 import requests
 import os
+import threading
 from datetime import datetime
 
 # ==============================
@@ -29,6 +30,8 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+SLACK_TOKEN = "xoxb-1259594035652-10740645182023-sVPgUXYxX8gRElqYO2VsIkZ9"
+
 # ==============================
 # FLASK SETUP
 # ==============================
@@ -37,131 +40,99 @@ flask_app = Flask(__name__)
 handler = SlackRequestHandler(app)
 
 # ==============================
-# HELPER: GET USER NAME
+# HELPER: GET USER NAME (direct API call)
 # ==============================
 
 def get_user_name(user_id):
     try:
-        response = app.client.users_info(user=user_id)
-        print("Full user API response:", response)
-        if response["ok"]:
-            user = response["user"]
-            print("real_name:", user.get("real_name"))
-            print("display_name:", user["profile"].get("display_name"))
-            return (
+        res = requests.get(
+            "https://slack.com/api/users.info",
+            headers={"Authorization": f"Bearer {SLACK_TOKEN}"},
+            params={"user": user_id}
+        )
+        data = res.json()
+        print("User API raw response:", data)
+        if data.get("ok"):
+            user = data["user"]
+            name = (
                 user.get("real_name")
-                or user["profile"].get("display_name")
+                or user.get("profile", {}).get("display_name")
                 or user_id
             )
+            print("Resolved user name:", name)
+            return name
+        else:
+            print("User API error:", data.get("error"))
     except Exception as e:
-        print("User fetch error:", e)
+        print("User fetch exception:", e)
     return user_id
 
 # ==============================
-# HELPER: GET CHANNEL NAME
+# HELPER: GET CHANNEL NAME (direct API call)
 # ==============================
 
 def get_channel_name(channel_id):
     try:
-        response = app.client.conversations_info(channel=channel_id)
-        print("Full channel API response:", response)
-        if response["ok"]:
-            return response["channel"].get("name", channel_id)
+        res = requests.get(
+            "https://slack.com/api/conversations.info",
+            headers={"Authorization": f"Bearer {SLACK_TOKEN}"},
+            params={"channel": channel_id}
+        )
+        data = res.json()
+        print("Channel API raw response:", data)
+        if data.get("ok"):
+            name = data["channel"].get("name", channel_id)
+            print("Resolved channel name:", name)
+            return name
+        else:
+            print("Channel API error:", data.get("error"))
     except Exception as e:
-        print("Channel fetch error:", e)
+        print("Channel fetch exception:", e)
     return channel_id
 
 # ==============================
-# ROUTES
+# BACKGROUND PROCESSOR
 # ==============================
 
-@flask_app.route("/")
-def home():
-    return "Bot is running ✅"
-
-@flask_app.route("/slack/events", methods=["POST"])
-def slack_events():
-
-    data = request.get_json(silent=True)
-
-    if data and data.get("type") == "url_verification":
-        return data["challenge"], 200, {"Content-Type": "text/plain"}
-
-    return handler.handle(request)
-
-# ==============================
-# EVENT LISTENER
-# ==============================
-
-@app.event("message")
-def handle_message_events(body, logger):
-
-    event = body["event"]
-
-    # Ignore bot messages
-    if "subtype" in event:
-        return
-
+def process_message(event):
     text = event.get("text")
     channel = event.get("channel")
     user_id = event.get("user")
     ts = event.get("ts")
+    thread_id = event.get("thread_ts") or ts
 
-    # Thread ID logic
-    thread_id = event.get("thread_ts") or event.get("ts")
+    print("--- Processing message in background ---")
+    print("Text:", text)
+    print("Raw channel:", channel)
+    print("Raw user_id:", user_id)
 
-    print("Message:", text)
-    print("Thread ID:", thread_id)
-    print("Raw channel ID:", channel)
-    print("Raw user ID:", user_id)
-
-    # ==============================
-    # GET USER NAME + CHANNEL NAME
-    # ==============================
-
+    # Resolve names
     user_name = get_user_name(user_id)
     channel_name = get_channel_name(channel)
 
-    print("Resolved Sender Name:", user_name)
-    print("Resolved Channel Name:", channel_name)
+    print("Final user_name:", user_name)
+    print("Final channel_name:", channel_name)
 
-    # ==============================
-    # CREATE SLACK LINK
-    # ==============================
-
+    # Slack link
     ts_formatted = ts.replace(".", "")
     slack_link = f"https://slack.com/archives/{channel}/p{ts_formatted}"
 
-    # ==============================
-    # CHECK NOSHOWS MATCH
-    # ==============================
-
+    # Check NoShows
     url_noshows = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NOSHOWS}"
-
     params = {
         "view": "DNT - NoShows Report change status",
         "filterByFormula": f"{{slackThreadId}}='{thread_id}'"
     }
-
     response = requests.get(url_noshows, headers=HEADERS, params=params)
     records = response.json().get("records", [])
-
     print(f"Matching NoShows records: {len(records)}")
-
-    # ==============================
-    # GET COMPANY NAME (if exists)
-    # ==============================
 
     company_name = ""
     if records:
         company_name = records[0]["fields"].get("companyName", "")
 
-    # ==============================
-    # STORE IN REPLIES TABLE
-    # ==============================
-
+    # Store in Replies table
     url_replies = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_REPLIES}"
-
     data_replies = {
         "fields": {
             "slackLink": slack_link,
@@ -174,29 +145,41 @@ def handle_message_events(body, logger):
             "senderName": user_name
         }
     }
-
     res = requests.post(url_replies, json=data_replies, headers=HEADERS)
     print("Replies table status:", res.status_code)
     print("Replies table response:", res.json())
 
-    # ==============================
-    # UPDATE NOSHOWS IF MATCH FOUND
-    # ==============================
-
+    # Update NoShows if match found
     if records:
         for rec in records:
             record_id = rec["id"]
-
             update_url = f"{url_noshows}/{record_id}"
-
-            update_data = {
-                "fields": {
-                    "Issue Raised by Company": "New Message"
-                }
-            }
-
+            update_data = {"fields": {"Issue Raised by Company": "New Message"}}
             update_res = requests.patch(update_url, json=update_data, headers=HEADERS)
             print("Updated NoShows:", update_res.status_code)
+
+# ==============================
+# ROUTES
+# ==============================
+
+@flask_app.route("/")
+def home():
+    return "Bot is running ✅"
+
+@flask_app.route("/slack/events", methods=["POST"])
+def slack_events():
+    data = request.get_json(silent=True)
+
+    if data and data.get("type") == "url_verification":
+        return data["challenge"], 200, {"Content-Type": "text/plain"}
+
+    # ✅ Acknowledge Slack immediately
+    if data and "event" in data:
+        event = data["event"]
+        if event.get("type") == "message" and "subtype" not in event:
+            threading.Thread(target=process_message, args=(event,)).start()
+
+    return "", 200
 
 # ==============================
 # RUN SERVER
@@ -204,4 +187,4 @@ def handle_message_events(body, logger):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host="0.0.0.0", port=port, threaded=True)  # ← add threaded=True
+    flask_app.run(host="0.0.0.0", port=port, threaded=True)
