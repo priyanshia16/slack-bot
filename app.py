@@ -10,7 +10,7 @@ from datetime import datetime
 # ==============================
 
 app = App(
-    token="xoxb-1259594035652-10740645182023-sVPgUXYxX8gRElqYO2VsIkZ9",  # keep your token
+    token="xoxb-1259594035652-10740645182023-sVPgUXYxX8gRElqYO2VsIkZ9",
     signing_secret="86c4027a79f6abfc5b2ef5c44567cbab"
 )
 
@@ -44,11 +44,28 @@ def get_user_name(user_id):
     try:
         response = app.client.users_info(user=user_id)
         if response["ok"]:
-            return response["user"]["real_name"]
+            user = response["user"]
+            return (
+                user.get("real_name")
+                or user["profile"].get("display_name")
+                or user_id
+            )
     except Exception as e:
         print("User fetch error:", e)
+    return user_id
 
-    return user_id  # fallback
+# ==============================
+# HELPER: GET CHANNEL NAME
+# ==============================
+
+def get_channel_name(channel_id):
+    try:
+        response = app.client.conversations_info(channel=channel_id)
+        if response["ok"]:
+            return response["channel"].get("name", channel_id)
+    except Exception as e:
+        print("Channel fetch error:", e)
+    return channel_id
 
 # ==============================
 # ROUTES
@@ -77,7 +94,7 @@ def handle_message_events(body, logger):
 
     event = body["event"]
 
-    # ❌ Ignore bot messages
+    # Ignore bot messages
     if "subtype" in event:
         return
 
@@ -86,17 +103,21 @@ def handle_message_events(body, logger):
     user_id = event.get("user")
     ts = event.get("ts")
 
-    # 🔥 Thread ID logic
+    # Thread ID logic
     thread_id = event.get("thread_ts") or event.get("ts")
 
     print("Message:", text)
     print("Thread ID:", thread_id)
 
     # ==============================
-    # GET USER NAME
+    # GET USER NAME + CHANNEL NAME
     # ==============================
 
     user_name = get_user_name(user_id)
+    channel_name = get_channel_name(channel)
+
+    print("Sender Name:", user_name)
+    print("Channel Name:", channel_name)
 
     # ==============================
     # CREATE SLACK LINK
@@ -130,7 +151,7 @@ def handle_message_events(body, logger):
         company_name = records[0]["fields"].get("companyName", "")
 
     # ==============================
-    # STORE IN REPLIES TABLE (FOR ALL MESSAGES)
+    # STORE IN REPLIES TABLE
     # ==============================
 
     url_replies = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_REPLIES}"
@@ -139,7 +160,7 @@ def handle_message_events(body, logger):
         "fields": {
             "slackLink": slack_link,
             "threadId": thread_id,
-            "channelName": channel,
+            "channelName": channel_name,
             "message": text,
             "Date": datetime.utcnow().isoformat(),
             "companyName": company_name,
@@ -152,7 +173,7 @@ def handle_message_events(body, logger):
     print("Replies table:", res.status_code)
 
     # ==============================
-    # UPDATE NOSHOWS ONLY IF MATCH FOUND
+    # UPDATE NOSHOWS IF MATCH FOUND
     # ==============================
 
     if records:
