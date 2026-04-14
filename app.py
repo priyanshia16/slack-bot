@@ -137,6 +137,7 @@ def process_message(event):
         "fields": {
             "slackLink": slack_link,
             "threadId": thread_id,
+            "channelId": channel,
             "channelName": channel_name,
             "message": text,
             "Date": datetime.utcnow().isoformat(),
